@@ -329,6 +329,8 @@ if "--video" in flags:
     bpy.ops.render.render(animation=True)
 else:
     sc.render.image_settings.file_format = "PNG"
+    sc.render.use_overwrite = False     # re-running the same command resumes where it stopped
+    sc.render.use_placeholder = True
     sc.render.filepath = os.path.join(OUT, "f_####")
     if "--blend" in flags:
         bpy.ops.wm.save_as_mainfile(filepath=os.path.join(OUT, "o01.blend"))

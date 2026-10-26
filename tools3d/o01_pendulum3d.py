@@ -131,6 +131,12 @@ sc.cycles.max_bounces = 4
 sc.cycles.diffuse_bounces = 2
 sc.cycles.glossy_bounces = 2
 sc.cycles.transmission_bounces = 0
+# LOOK presets (owner picks one from sample stills): satin (default), glossy, glass, metal,
+# clay (matte balls + visible shadows on a lit wall), neon (self-lit glowing balls)
+LOOK = os.environ.get("O1_LOOK", "satin")
+if LOOK == "glass":
+    sc.cycles.transmission_bounces = 6
+    sc.cycles.max_bounces = 8
 sc.render.use_persistent_data = True
 sc.render.use_motion_blur = True
 sc.render.motion_blur_shutter = 0.5
@@ -256,7 +262,7 @@ def set_glow(o, v, f):
 
 # back wall: 120 px behind the pendulums, close to the 2D background colour; it only
 # catches the soft shadows and a faint pool of light around the rig
-wall_m = material("wall", lin((10, 10, 16)), rough=0.9)
+wall_m = material("wall", lin((24, 24, 34) if LOOK == "clay" else (10, 10, 16)), rough=0.9)
 for _k in ("Specular IOR Level", "Specular"):          # no sheen: the wall stays near-black
     if _k in wall_m.node_tree.nodes["Principled BSDF"].inputs:
         wall_m.node_tree.nodes["Principled BSDF"].inputs[_k].default_value = 0.0
@@ -308,6 +314,27 @@ for i in range(N):
     pv.name = f"pivot{i}"
     bob_m = material(f"bob{i}", lin(COL[i]), rough=0.25, glow_color=lin(COL[i]),
                      glow_base=0.0, glow_gain=1.2)
+    bsdf = bob_m.node_tree.nodes["Principled BSDF"]
+    if LOOK == "glossy":
+        bsdf.inputs["Roughness"].default_value = 0.05
+        bsdf.inputs["Coat Weight"].default_value = 1.0
+        bsdf.inputs["Coat Roughness"].default_value = 0.02
+    elif LOOK == "glass":
+        bsdf.inputs["Transmission Weight"].default_value = 1.0
+        bsdf.inputs["Roughness"].default_value = 0.04
+        bsdf.inputs["IOR"].default_value = 1.45
+        mad = [n for n in bob_m.node_tree.nodes if n.type == "MATH"][0]
+        mad.inputs[2].default_value = 0.6          # faint inner light so the glass reads on black
+    elif LOOK == "metal":
+        bsdf.inputs["Metallic"].default_value = 1.0
+        bsdf.inputs["Roughness"].default_value = 0.18
+    elif LOOK == "clay":
+        bsdf.inputs["Roughness"].default_value = 0.75
+    elif LOOK == "neon":
+        bsdf.inputs["Roughness"].default_value = 0.2
+        mad = [n for n in bob_m.node_tree.nodes if n.type == "MATH"][0]
+        mad.inputs[2].default_value = 2.2          # self-lit core
+        mad.inputs[1].default_value = 3.0
     b = sphere(f"bob{i}", W(PX, PY + RS[i]), BOB_R / 1000, bob_m, 32)
     s = cyl(f"str{i}", W(PX, PY), W(PX, PY + RS[i] - BOB_R * 0.6), 0.0009, string_m, 6)
     for o in (b, s):
@@ -331,10 +358,15 @@ def area(name, loc, target, energy, size, color=(1, 1, 1)):
     return o
 
 
-area("key", (-0.9, -1.4, 1.4), (0, 0, 0.1), float(os.environ.get("O1_KEY", "80")), 0.8,
+area("key", (-0.9, -1.4, 1.4), (0, 0, 0.1), float(os.environ.get("O1_KEY", "120" if LOOK in ("metal", "glass") else "80")), 0.8,
      (1.0, 0.97, 0.93))
 area("fill", (1.2, -1.2, -0.2), (0, 0, 0.1), float(os.environ.get("O1_FILL", "10")), 1.2,
      (0.8, 0.88, 1.0))
+
+if LOOK in ("glossy", "metal", "glass"):   # a long soft strip light for crisp reflections
+    _st = area("strip", (0.6, -1.0, 1.0), (0, 0, 0.1), 40.0, 0.3, (1.0, 1.0, 1.0))
+    _st.data.shape = "RECTANGLE"
+    _st.data.size_y = 2.0
 
 # orthographic camera = the 2D video's pixel grid
 bpy.ops.object.camera_add(location=(0, -3.0, 0), rotation=(math.pi / 2, 0, 0))

@@ -54,7 +54,8 @@ NSW = [K + (N - 1 - i) for i in range(N)]   # i=0 inner/shortest/fastest
 PX, PY = 540.0, 486.0           # shared pivot (video px)
 R_IN, R_OUT = 232.0, 1010.0
 RS = [R_IN + (R_OUT - R_IN) * i / (N - 1) for i in range(N)]
-BOB_R, SLOT_R = 15.0, 21.0
+BOB_R = float(os.environ.get("O1_BOB", "15"))   # 2D video: 15 px
+SLOT_R = BOB_R + 6.0
 NEAR = 0.035
 
 
@@ -134,7 +135,8 @@ sc.cycles.transmission_bounces = 0
 # LOOK presets (owner picks one from sample stills): satin (default), glossy, glass, metal,
 # clay (matte balls + visible shadows on a lit wall), neon (self-lit glowing balls)
 LOOK = os.environ.get("O1_LOOK", "satin")
-if LOOK == "glass":
+PREMIUM = LOOK in ("blackgold", "jewel", "pearl")
+if LOOK in ("glass", "jewel"):
     sc.cycles.transmission_bounces = 6
     sc.cycles.max_bounces = 8
 sc.render.use_persistent_data = True
@@ -262,7 +264,8 @@ def set_glow(o, v, f):
 
 # back wall: 120 px behind the pendulums, close to the 2D background colour; it only
 # catches the soft shadows and a faint pool of light around the rig
-wall_m = material("wall", lin((24, 24, 34) if LOOK == "clay" else (10, 10, 16)), rough=0.9)
+wall_m = material("wall", lin((24, 24, 34) if LOOK == "clay" else (8, 8, 11) if PREMIUM
+                              else (10, 10, 16)), rough=0.9)
 for _k in ("Specular IOR Level", "Specular"):          # no sheen: the wall stays near-black
     if _k in wall_m.node_tree.nodes["Principled BSDF"].inputs:
         wall_m.node_tree.nodes["Principled BSDF"].inputs[_k].default_value = 0.0
@@ -273,6 +276,18 @@ bpy.context.object.data.materials.append(wall_m)
 steel = material("steel", lin((170, 172, 182)), rough=0.3, metal=1.0)
 string_m = material("string", lin((225, 225, 232)), rough=0.5)
 knob_m = material("knob", lin((235, 235, 240)), rough=0.35, metal=0.6)
+if LOOK == "blackgold":          # brushed gold mount, fine gold wires
+    steel = material("gold_metal", lin((255, 196, 110)), rough=0.22, metal=1.0)
+    string_m = material("gold_wire", lin((240, 190, 110)), rough=0.3, metal=1.0)
+    knob_m = steel
+elif LOOK == "jewel":            # polished silver
+    steel = material("silver", lin((235, 235, 242)), rough=0.12, metal=1.0)
+    string_m = material("silver_wire", lin((225, 225, 235)), rough=0.2, metal=1.0)
+    knob_m = steel
+elif LOOK == "pearl":            # champagne metal
+    steel = material("champagne", lin((235, 215, 185)), rough=0.25, metal=1.0)
+    string_m = material("champ_wire", lin((235, 220, 200)), rough=0.3, metal=1.0)
+    knob_m = steel
 
 # mount: the white bar + stub + pivot knob of the 2D video, as metal parts
 cyl("bar", W(PX - 70, PY - 16), W(PX + 70, PY - 16), 0.0042, steel, 24)
@@ -330,6 +345,21 @@ for i in range(N):
         bsdf.inputs["Roughness"].default_value = 0.18
     elif LOOK == "clay":
         bsdf.inputs["Roughness"].default_value = 0.75
+    elif LOOK == "blackgold":      # deep lacquer, mirror coat
+        bsdf.inputs["Roughness"].default_value = 0.12
+        bsdf.inputs["Coat Weight"].default_value = 1.0
+        bsdf.inputs["Coat Roughness"].default_value = 0.01
+    elif LOOK == "jewel":          # cut-glass gem with a faint inner light
+        bsdf.inputs["Transmission Weight"].default_value = 1.0
+        bsdf.inputs["Roughness"].default_value = 0.0
+        bsdf.inputs["IOR"].default_value = 1.7
+        mad = [n for n in bob_m.node_tree.nodes if n.type == "MATH"][0]
+        mad.inputs[2].default_value = 0.9
+    elif LOOK == "pearl":          # glazed porcelain
+        bsdf.inputs["Roughness"].default_value = 0.4
+        bsdf.inputs["Coat Weight"].default_value = 1.0
+        bsdf.inputs["Coat Roughness"].default_value = 0.04
+        bsdf.inputs["Sheen Weight"].default_value = 0.4
     elif LOOK == "neon":
         bsdf.inputs["Roughness"].default_value = 0.2
         mad = [n for n in bob_m.node_tree.nodes if n.type == "MATH"][0]
@@ -355,6 +385,7 @@ def area(name, loc, target, energy, size, color=(1, 1, 1)):
     o.data.color = color
     o.rotation_mode = "QUATERNION"
     o.rotation_quaternion = (Vector(target) - Vector(loc)).to_track_quat("-Z", "Y")
+    o.visible_camera = False        # lights show up in reflections, never as shapes in shot
     return o
 
 
@@ -363,7 +394,22 @@ area("key", (-0.9, -1.4, 1.4), (0, 0, 0.1), float(os.environ.get("O1_KEY", "120"
 area("fill", (1.2, -1.2, -0.2), (0, 0, 0.1), float(os.environ.get("O1_FILL", "10")), 1.2,
      (0.8, 0.88, 1.0))
 
-if LOOK in ("glossy", "metal", "glass"):   # a long soft strip light for crisp reflections
+if PREMIUM:
+    # product-shot lighting: a soft spot pool on the backdrop behind the rig (vignette),
+    # two rim lights from behind that draw a thin bright edge on every ball and wire
+    bpy.ops.object.light_add(type="SPOT", location=(0, -1.6, 1.1))
+    sp = bpy.context.object
+    sp.data.energy = float(os.environ.get("O1_POOL", "160"))
+    sp.data.spot_size = math.radians(38)
+    sp.data.spot_blend = 1.0
+    sp.data.shadow_soft_size = 0.4
+    sp.data.color = (1.0, 0.93, 0.85) if LOOK != "jewel" else (0.85, 0.9, 1.0)
+    sp.rotation_mode = "QUATERNION"
+    sp.rotation_quaternion = (Vector((0, 0.12, 0.08)) - sp.location).to_track_quat("-Z", "Y")
+    rim = float(os.environ.get("O1_RIM", "60"))
+    area("rimL", (-1.2, 0.08, 0.95), (0.2, -1.0, 0.1), rim, 0.3, (1.0, 0.95, 0.88))
+    area("rimR", (1.2, 0.08, -0.45), (-0.2, -1.0, 0.2), rim, 0.3, (0.85, 0.9, 1.0))
+if LOOK in ("glossy", "metal", "glass", "blackgold", "jewel", "pearl"):   # long soft strip light for crisp reflections
     _st = area("strip", (0.6, -1.0, 1.0), (0, 0, 0.1), 40.0, 0.3, (1.0, 1.0, 1.0))
     _st.data.shape = "RECTANGLE"
     _st.data.size_y = 2.0
